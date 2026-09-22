@@ -1,11 +1,11 @@
 class Yabai < Formula
   desc "A tiling window manager for macOS based on binary space partitioning."
   homepage "https://github.com/ldelossa/yabai"
-  url "https://github.com/ldelossa/yabai/releases/download/v7.1.25-ldelossa.3/yabai-v7.1.25.tar.gz"
-  sha256 "51a5ced763ae886495d2a806b12ec08daf5b722dfeaa57b90190a6d340d45678"
+  url "https://github.com/ldelossa/yabai/releases/download/v7.1.25-ldelossa.4/yabai-v7.1.25.tar.gz"
+  sha256 "9b29f19bf837e7b64bd4588eea8fd9d9996b283428ef1beefb520887a3244d09"
   license "MIT"
   version "7.1.25"
-  revision 2
+  revision 3
   head "https://github.com/ldelossa/yabai.git"
 
   depends_on :macos => :golden_gate
