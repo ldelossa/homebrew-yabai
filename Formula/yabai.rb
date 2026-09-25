@@ -5,7 +5,7 @@ class Yabai < Formula
   sha256 "11429c0ab3793820f1b759ba38a634aa06052ed5c44fe9a9173d9b453d84ed62"
   license "MIT"
   version "7.1.25"
-  revision 5
+  revision 6
   head "https://github.com/ldelossa/yabai.git"
 
   depends_on :macos => :golden_gate
@@ -24,6 +24,33 @@ class Yabai < Formula
     man1.install "#{buildpath}/doc/yabai.1"
   end
 
+  def post_install
+    # Install the daemon to a stable, non-versioned path so macOS keeps the
+    # Accessibility (TCC) grant across upgrades. Homebrew's versioned Cellar
+    # changes the resolved binary path on every upgrade, which forces a
+    # re-grant. Replace atomically so a running daemon keeps its old inode.
+    stable_dir = "#{HOMEBREW_PREFIX}/var/yabai"
+    FileUtils.mkdir_p stable_dir
+    tmp = "#{stable_dir}/.yabai.tmp"
+    FileUtils.install "#{prefix}/bin/yabai", tmp, mode: 0555
+    File.rename tmp, "#{stable_dir}/yabai"
+
+    # Point the `yabai` command at the stable binary so the resolved path
+    # (and therefore the TCC identity) never changes between upgrades.
+    FileUtils.rm_f "#{HOMEBREW_PREFIX}/bin/yabai"
+    FileUtils.ln_s "#{stable_dir}/yabai", "#{HOMEBREW_PREFIX}/bin/yabai"
+  end
+
+  def post_uninstall
+    FileUtils.rm_f "#{HOMEBREW_PREFIX}/bin/yabai"
+    FileUtils.rm_f "#{HOMEBREW_PREFIX}/var/yabai/yabai"
+    begin
+      Dir.rmdir "#{HOMEBREW_PREFIX}/var/yabai"
+    rescue SystemCallError
+      # Ignore if the directory is not empty.
+    end
+  end
+
   def caveats; <<~EOS
     This is the ldelossa fork of yabai, targeting macOS 27 (Golden Gate) and later.
 
@@ -32,6 +59,10 @@ class Yabai < Formula
 
     If you are using the scripting-addition, update your sudoers file and load it:
       sudo yabai --load-sa
+
+    The binary is installed to a stable path so the Accessibility grant
+    survives upgrades. Grant Accessibility once after your next upgrade;
+    later upgrades will not re-prompt.
 
     README: https://github.com/ldelossa/yabai
     EOS
