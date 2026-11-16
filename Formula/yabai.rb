@@ -1,14 +1,16 @@
 class Yabai < Formula
-  desc "A tiling window manager for macOS based on binary space partitioning."
+  desc "Tiling window manager for macOS based on binary space partitioning"
   homepage "https://github.com/ldelossa/yabai"
-  url "https://github.com/ldelossa/yabai/releases/download/v7.1.25-ldelossa.14/yabai-v7.1.25.tar.gz"
-  sha256 "17216b20e848a8b24c22ca3921ca0e5f179e95ea8032d23f9ff5d53d9eda8382"
+  url "https://github.com/ldelossa/yabai/releases/download/v7.1.25-ldelossa.15/yabai-v7.1.25.tar.gz"
+  sha256 "32daa6434cba6a5e9e4c69c724a6f5d147d2280cb451abba9d4ef74befec8f1c"
   license "MIT"
-  version "7.1.25"
-  revision 14
+  revision 15
   head "https://github.com/ldelossa/yabai.git"
 
-  depends_on :macos => :golden_gate
+  depends_on macos: :golden_gate
+
+  # Preserve the released Developer ID signature byte-for-byte.
+  skip_clean "libexec/yabai"
 
   def install
     man.mkpath
@@ -18,57 +20,82 @@ class Yabai < Formula
       system "codesign", "-fs", "-", "#{buildpath}/bin/yabai"
     end
 
-    bin.install "#{buildpath}/bin/yabai"
+    # Keep Homebrew's normal bin linking away from the stable CLI symlink.
+    libexec.install "#{buildpath}/bin/yabai"
+    (libexec/"yabai-stable-install").write stable_install_script
+    (libexec/"yabai-stable-install").chmod 0755
     (pkgshare/"examples").install "#{buildpath}/examples/yabairc"
     (pkgshare/"examples").install "#{buildpath}/examples/skhdrc"
     man1.install "#{buildpath}/doc/yabai.1"
   end
 
-  def post_install
-    # Install the daemon to a stable, non-versioned path so macOS keeps the
-    # Accessibility (TCC) grant across upgrades. Homebrew's versioned Cellar
-    # changes the resolved binary path on every upgrade, which forces a
-    # re-grant. Replace atomically so a running daemon keeps its old inode.
-    stable_dir = "#{HOMEBREW_PREFIX}/var/yabai"
-    FileUtils.mkdir_p stable_dir
-    tmp = "#{stable_dir}/.yabai.tmp"
-    FileUtils.install "#{prefix}/bin/yabai", tmp, mode: 0555
-    File.rename tmp, "#{stable_dir}/yabai"
-
-    # Point the `yabai` command at the stable binary so the resolved path
-    # (and therefore the TCC identity) never changes between upgrades.
-    FileUtils.rm_f "#{HOMEBREW_PREFIX}/bin/yabai"
-    FileUtils.ln_s "#{stable_dir}/yabai", "#{HOMEBREW_PREFIX}/bin/yabai"
+  post_install_steps do
+    run "libexec/yabai-stable-install", base: :prefix,
+        args: ["{{HOMEBREW_PREFIX}}", "{{prefix}}"],
+        writable_paths: ["bin", "var/yabai"], writable_base: :homebrew_prefix
   end
 
-  def post_uninstall
-    FileUtils.rm_f "#{HOMEBREW_PREFIX}/bin/yabai"
-    FileUtils.rm_f "#{HOMEBREW_PREFIX}/var/yabai/yabai"
-    begin
-      Dir.rmdir "#{HOMEBREW_PREFIX}/var/yabai"
-    rescue SystemCallError
-      # Ignore if the directory is not empty.
-    end
+  def stable_install_script
+    <<~SH
+      #!/bin/sh
+      set -eu
+      [ "$#" -eq 2 ] || exit 64
+      prefix=${1%/}
+      keg=${2%/}
+      case "$prefix" in /*) ;; *) exit 64 ;; esac
+      case "$keg" in /*) ;; *) exit 64 ;; esac
+      source="$keg/libexec/yabai"
+      stable="$prefix/var/yabai"
+      cli="$prefix/bin/yabai"
+      [ -f "$source" ] || exit 1
+      # Never follow an unexpected stable-path symlink or replace another CLI.
+      [ ! -L "$stable" ] && [ ! -L "$stable/yabai" ] || exit 1
+      if [ -e "$cli" ] || [ -L "$cli" ]; then
+        [ -L "$cli" ] || exit 1
+        target=$(/usr/bin/readlink "$cli")
+        case "$target" in
+          "$stable/yabai"|../var/yabai/yabai|"$prefix"/Cellar/yabai/*/bin/yabai|../Cellar/yabai/*/bin/yabai) ;;
+          *) exit 1 ;;
+        esac
+      fi
+      /usr/bin/codesign --verify --strict "$source"
+      /bin/mkdir -p "$stable" "$prefix/bin"
+      tmp="$stable/.yabai.install.$$"
+      link="$prefix/bin/.yabai.link.$$"
+      cleanup() { /bin/rm -f "$tmp" "$link"; }
+      trap cleanup EXIT
+      trap 'exit 1' HUP INT TERM
+      /usr/bin/install -m 0555 "$source" "$tmp"
+      /usr/bin/codesign --verify --strict "$tmp"
+      /bin/ln -s "$stable/yabai" "$link"
+      # Both temporary files share their destination directory/filesystem.
+      # Unlike the declarative move step, mv renames over the old inode.
+      /bin/mv -f "$tmp" "$stable/yabai"
+      /bin/mv -f "$link" "$cli"
+    SH
   end
 
-  def caveats; <<~EOS
-    This is the ldelossa fork of yabai, targeting macOS 27 (Golden Gate) and later.
+  def caveats
+    <<~EOS
+      This is the ldelossa fork of yabai, targeting macOS 27 (Golden Gate) and later.
 
-    If you want yabai to be managed by launchd (start automatically upon login):
-      yabai --start-service
+      If you want yabai to be managed by launchd (start automatically upon login):
+        yabai --start-service
 
-    If you are using the scripting-addition, update your sudoers file and load it:
-      sudo yabai --load-sa
+      The binary uses a stable, non-versioned path to preserve Accessibility
+      permissions across signed release upgrades. If macOS requests access,
+      grant it to the stable binary at var/yabai/yabai under your Homebrew prefix.
 
-    The binary is installed to a stable path so the Accessibility grant
-    survives upgrades. Grant Accessibility once after your next upgrade;
-    later upgrades will not re-prompt.
-
-    README: https://github.com/ldelossa/yabai
+      Scripting-addition setup and compatibility details:
+        https://github.com/ldelossa/yabai#scripting-addition
     EOS
   end
 
   test do
-    assert_match "yabai-v#{version}", shell_output("#{bin}/yabai --version")
+    assert_match "yabai-v#{version}", shell_output("#{libexec}/yabai --version")
+    stable = HOMEBREW_PREFIX/"var/yabai/yabai"
+    assert_predicate stable, :executable?
+    assert_equal stable, (HOMEBREW_PREFIX/"bin/yabai").realpath
+    assert_equal Digest::SHA256.file(libexec/"yabai").hexdigest, Digest::SHA256.file(stable).hexdigest
   end
 end
